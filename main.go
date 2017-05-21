@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 
@@ -13,11 +14,13 @@ import (
 
 type elasticSearchFs struct {
 	pathfs.FileSystem
-	db *elastic.Client
+
+	indexNames []string
+	mappings   map[string]interface{}
 }
 
 func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	if name == "" || name == "foo" || name == "bar" {
+	if name == "" || name == "foo" || name == "bar" || name == "foo/test" || name == "bar/test2" {
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 	}
 	return nil, fuse.ENOENT
@@ -25,13 +28,15 @@ func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.At
 
 func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntry, code fuse.Status) {
 	if name == "" {
-		names, err := fs.db.IndexNames()
-		if err != nil {
-			log.Fatalf("Failed to get index names: error=%v¥n", err)
-			return nil, fuse.ENOENT
+		for _, indexName := range fs.indexNames {
+			c = append(c, fuse.DirEntry{Name: indexName, Mode: fuse.S_IFDIR})
 		}
-		for _, name := range names {
-			c = append(c, fuse.DirEntry{Name: name, Mode: fuse.S_IFDIR})
+		return c, fuse.OK
+	}
+	if name == "foo" || name == "bar" {
+		indexMappings := fs.mappings[name].(map[string]interface{})["mappings"].(map[string]interface{})
+		for docType := range indexMappings {
+			c = append(c, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
 		}
 		return c, fuse.OK
 	}
@@ -39,6 +44,7 @@ func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (c []fuse
 }
 
 func main() {
+	// Parse the command arguments
 	flag.Parse()
 	if len(flag.Args()) < 2 {
 		log.Fatal("Usage: elasticsearch-fuse ELASTICSEARCH_URL MOUNT_PATH")
@@ -46,12 +52,22 @@ func main() {
 	dbURL := flag.Arg(0)
 	mountPath := flag.Arg(1)
 
+	// Create the filesystem is specialized for Elasticsearch
 	dbClient, err := elastic.NewClient(elastic.SetURL(dbURL))
 	if err != nil {
 		log.Fatalf("Failed to new client: error=%v¥n", err)
 	}
-	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), dbClient}, nil)
+	indexNames, err := dbClient.IndexNames()
+	if err != nil {
+		log.Fatalf("Failed to fetch index names: error=%v¥n", err)
+	}
+	mappings, err := dbClient.GetMapping().Do(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to fetch document types: error=%v¥n", err)
+	}
+	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), indexNames, mappings}, nil)
 
+	// Start the FUSE server
 	fuseServer, _, err := nodefs.MountRoot(mountPath, fs.Root(), nil)
 	if err != nil {
 		log.Fatalf("Failed to mount root: error=%v¥n", err)
