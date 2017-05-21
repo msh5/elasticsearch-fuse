@@ -1,0 +1,59 @@
+package main
+
+import (
+	"flag"
+	"log"
+
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/fuse/nodefs"
+	"github.com/hanwen/go-fuse/fuse/pathfs"
+)
+
+type elasticSearchFs struct {
+	pathfs.FileSystem
+}
+
+func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
+	switch name {
+	case "file.txt":
+		return &fuse.Attr{
+			Mode: fuse.S_IFREG | 0644, Size: uint64(len(name)),
+		}, fuse.OK
+	case "":
+		return &fuse.Attr{
+			Mode: fuse.S_IFDIR | 0755,
+		}, fuse.OK
+	}
+	return nil, fuse.ENOENT
+}
+
+func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntry, code fuse.Status) {
+	if name == "" {
+		c = []fuse.DirEntry{{Name: "file.txt", Mode: fuse.S_IFREG}}
+		return c, fuse.OK
+	}
+	return nil, fuse.ENOENT
+}
+
+func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, code fuse.Status) {
+	if name != "file.txt" {
+		return nil, fuse.ENOENT
+	}
+	if flags&fuse.O_ANYWRITE != 0 {
+		return nil, fuse.EPERM
+	}
+	return nodefs.NewDataFile([]byte(name)), fuse.OK
+}
+
+func main() {
+	flag.Parse()
+	if len(flag.Args()) < 1 {
+		log.Fatal("Usage: elasticsearch-fuse MOUNT_PATH")
+	}
+	fs := pathfs.NewPathNodeFs(&elasticSearchFs{FileSystem: pathfs.NewDefaultFileSystem()}, nil)
+	server, _, err := nodefs.MountRoot(flag.Arg(0), fs.Root(), nil)
+	if err != nil {
+		log.Fatalf("Failed to mount root: %v\n", err)
+	}
+	server.Serve()
+}
