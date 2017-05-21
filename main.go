@@ -7,53 +7,54 @@ import (
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
+
+	elastic "gopkg.in/olivere/elastic.v5"
 )
 
 type elasticSearchFs struct {
 	pathfs.FileSystem
+	db *elastic.Client
 }
 
 func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	switch name {
-	case "file.txt":
-		return &fuse.Attr{
-			Mode: fuse.S_IFREG | 0644, Size: uint64(len(name)),
-		}, fuse.OK
-	case "":
-		return &fuse.Attr{
-			Mode: fuse.S_IFDIR | 0755,
-		}, fuse.OK
+	if name == "" || name == "foo" || name == "bar" {
+		return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
 
 func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntry, code fuse.Status) {
 	if name == "" {
-		c = []fuse.DirEntry{{Name: "file.txt", Mode: fuse.S_IFREG}}
+		names, err := fs.db.IndexNames()
+		if err != nil {
+			log.Fatalf("Failed to get index names: error=%v¥n", err)
+			return nil, fuse.ENOENT
+		}
+		for _, name := range names {
+			c = append(c, fuse.DirEntry{Name: name, Mode: fuse.S_IFDIR})
+		}
 		return c, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
 
-func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, code fuse.Status) {
-	if name != "file.txt" {
-		return nil, fuse.ENOENT
-	}
-	if flags&fuse.O_ANYWRITE != 0 {
-		return nil, fuse.EPERM
-	}
-	return nodefs.NewDataFile([]byte(name)), fuse.OK
-}
-
 func main() {
 	flag.Parse()
-	if len(flag.Args()) < 1 {
-		log.Fatal("Usage: elasticsearch-fuse MOUNT_PATH")
+	if len(flag.Args()) < 2 {
+		log.Fatal("Usage: elasticsearch-fuse ELASTICSEARCH_URL MOUNT_PATH")
 	}
-	fs := pathfs.NewPathNodeFs(&elasticSearchFs{FileSystem: pathfs.NewDefaultFileSystem()}, nil)
-	server, _, err := nodefs.MountRoot(flag.Arg(0), fs.Root(), nil)
+	dbURL := flag.Arg(0)
+	mountPath := flag.Arg(1)
+
+	dbClient, err := elastic.NewClient(elastic.SetURL(dbURL))
 	if err != nil {
-		log.Fatalf("Failed to mount root: %v\n", err)
+		log.Fatalf("Failed to new client: error=%v¥n", err)
 	}
-	server.Serve()
+	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), dbClient}, nil)
+
+	fuseServer, _, err := nodefs.MountRoot(mountPath, fs.Root(), nil)
+	if err != nil {
+		log.Fatalf("Failed to mount root: error=%v¥n", err)
+	}
+	fuseServer.Serve()
 }
