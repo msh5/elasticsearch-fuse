@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"log"
-	"strings"
 
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -22,11 +21,16 @@ type elasticSearchFs struct {
 }
 
 func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	if name == "" || name == "foo" || name == "bar" || name == "foo/test" || name == "foo/bar" {
+	if name == "" || name == "foo" || name == "bar" || name == "foo/test" || name == "bar/test2" {
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 	}
-	if strings.HasPrefix(name, "foo/test/") || strings.HasPrefix(name, "foo/bar/") {
-		return &fuse.Attr{Mode: fuse.S_IFREG | 0444}, fuse.OK
+	if name == "foo/test/AVwqw4EZ5JQc-2pm7e5y" {
+		filesize := uint64(len(fs.documents["foo"]["test"]["AVwqw4EZ5JQc-2pm7e5y"]))
+		return &fuse.Attr{Mode: fuse.S_IFREG | 0444, Size: filesize}, fuse.OK
+	}
+	if name == "bar/test2/AVwqxL895JQc-2pm7e5z" {
+		filesize := uint64(len(fs.documents["bar"]["test2"]["AVwqxL895JQc-2pm7e5z"]))
+		return &fuse.Attr{Mode: fuse.S_IFREG | 0444, Size: filesize}, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
@@ -56,6 +60,16 @@ func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entries 
 			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
 		}
 		return entries, fuse.OK
+	}
+	return nil, fuse.ENOENT
+}
+
+func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, st fuse.Status) {
+	if name == "foo/test/AVwqw4EZ5JQc-2pm7e5y" {
+		return nodefs.NewDataFile(fs.documents["foo"]["test"]["AVwqw4EZ5JQc-2pm7e5y"]), fuse.OK
+	}
+	if name == "bar/test2/AVwqxL895JQc-2pm7e5z" {
+		return nodefs.NewDataFile(fs.documents["bar"]["test2"]["AVwqxL895JQc-2pm7e5z"]), fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
