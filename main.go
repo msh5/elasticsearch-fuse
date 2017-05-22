@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strings"
 
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -17,28 +18,44 @@ type elasticSearchFs struct {
 
 	indexNames []string
 	mappings   map[string]interface{}
+	documents  map[string]map[string]map[string][]byte
 }
 
 func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	if name == "" || name == "foo" || name == "bar" || name == "foo/test" || name == "bar/test2" {
+	if name == "" || name == "foo" || name == "bar" || name == "foo/test" || name == "foo/bar" {
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
+	}
+	if strings.HasPrefix(name, "foo/test/") || strings.HasPrefix(name, "foo/bar/") {
+		return &fuse.Attr{Mode: fuse.S_IFREG | 0444}, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
 
-func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (c []fuse.DirEntry, code fuse.Status) {
+func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entries []fuse.DirEntry, st fuse.Status) {
 	if name == "" {
 		for _, indexName := range fs.indexNames {
-			c = append(c, fuse.DirEntry{Name: indexName, Mode: fuse.S_IFDIR})
+			entries = append(entries, fuse.DirEntry{Name: indexName, Mode: fuse.S_IFDIR})
 		}
-		return c, fuse.OK
+		return entries, fuse.OK
 	}
 	if name == "foo" || name == "bar" {
 		indexMappings := fs.mappings[name].(map[string]interface{})["mappings"].(map[string]interface{})
 		for docType := range indexMappings {
-			c = append(c, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
+			entries = append(entries, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
 		}
-		return c, fuse.OK
+		return entries, fuse.OK
+	}
+	if name == "foo/test" {
+		for docID := range fs.documents["foo"]["test"] {
+			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
+		}
+		return entries, fuse.OK
+	}
+	if name == "bar/test2" {
+		for docID := range fs.documents["bar"]["test2"] {
+			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
+		}
+		return entries, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
@@ -65,7 +82,28 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to fetch document types: error=%v¥n", err)
 	}
-	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), indexNames, mappings}, nil)
+	documents := make(map[string]map[string]map[string][]byte)
+	for indexName, mappingsByIndex := range mappings {
+		indexMappings := mappingsByIndex.(map[string]interface{})["mappings"].(map[string]interface{})
+		documentsByIndex := make(map[string]map[string][]byte)
+		for docType := range indexMappings {
+			documentsByDocType := make(map[string][]byte)
+			result, err2 := dbClient.Search().Index(indexName).Type(docType).Do(context.Background())
+			if err2 != nil {
+				log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
+			}
+			for _, hit := range result.Hits.Hits {
+				docSource, err2 := hit.Source.MarshalJSON()
+				if err2 != nil {
+					log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
+				}
+				documentsByDocType[hit.Id] = docSource
+			}
+			documentsByIndex[docType] = documentsByDocType
+		}
+		documents[indexName] = documentsByIndex
+	}
+	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), indexNames, mappings, documents}, nil)
 
 	// Start the FUSE server
 	fuseServer, _, err := nodefs.MountRoot(mountPath, fs.Root(), nil)
