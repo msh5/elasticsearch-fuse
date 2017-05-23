@@ -21,13 +21,54 @@ type elasticSearchFs struct {
 	documents  map[string]map[string]map[string][]byte
 }
 
+func (fs *elasticSearchFs) findMappingsByIndex(indexName string) (map[string]interface{}, bool) {
+	mappings, ok := fs.mappings[indexName]
+	if ok {
+		return mappings.(map[string]interface{})["mappings"].(map[string]interface{}), true
+	}
+	return nil, false
+}
+
+func (fs *elasticSearchFs) findMapping(indexName string, docType string) (interface{}, bool) {
+	mappingsByIndex, ok := fs.findMappingsByIndex(indexName)
+	if ok {
+		mapping, ok := mappingsByIndex[docType]
+		if ok {
+			return mapping, true
+		}
+	}
+	return nil, false
+}
+
+func (fs *elasticSearchFs) findDocumentsByType(indexName string, docType string) (map[string][]byte, bool) {
+	docsByIndex, ok := fs.documents[indexName]
+	if ok {
+		docsByType, ok := docsByIndex[docType]
+		if ok {
+			return docsByType, true
+		}
+	}
+	return nil, false
+}
+
+func (fs *elasticSearchFs) findDocument(indexName string, docType string, docID string) ([]byte, bool) {
+	docsByType, ok := fs.findDocumentsByType(indexName, docType)
+	if ok {
+		docSource, ok := docsByType[docID]
+		if ok {
+			return docSource, true
+		}
+	}
+	return nil, false
+}
+
 func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	// Attribute of root directory
+	// Return the attribute of the root directory
 	if name == "" {
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 	}
 
-	// Attribute of the directories for index
+	// Return the attribute of the index directory
 	nameElems := strings.Split(name, "/")
 	if len(nameElems) == 1 {
 		exists := false
@@ -42,70 +83,55 @@ func (fs *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.At
 		}
 	}
 
-	// Attributes of the directory for document type
+	// Return the attributes of the document type directory
 	if len(nameElems) == 2 {
-		// Classify the 'nameElems' elements
-		indexName := nameElems[0]
-		docType := nameElems[1]
-
-		// Return the directory attribute if the type exists
-		mappingsByIndex, ok := fs.mappings[indexName]
+		_, ok := fs.findMapping(nameElems[0], nameElems[1])
 		if ok {
-			_, ok := mappingsByIndex.(map[string]interface{})["mappings"].(map[string]interface{})[docType]
-			if ok {
-				return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
-			}
+			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 		}
 	}
 
-	// Attributes of the file for document
+	// Return the attributes of the document file
 	if len(nameElems) == 3 {
-		// Classify the 'nameElems' elements
-		indexName := nameElems[0]
-		docType := nameElems[1]
-		docID := nameElems[2]
-
-		// Return the file attribute if the document exists
-		docsByIndex, ok := fs.documents[indexName]
+		docSource, ok := fs.findDocument(nameElems[0], nameElems[1], nameElems[2])
 		if ok {
-			docsByType, ok := docsByIndex[docType]
-			if ok {
-				docSource, ok := docsByType[docID]
-				if ok {
-					fileSize := uint64(len(docSource))
-					return &fuse.Attr{Mode: fuse.S_IFREG | 0444, Size: fileSize}, fuse.OK
-				}
-			}
+			fileSize := uint64(len(docSource))
+			return &fuse.Attr{Mode: fuse.S_IFREG | 0444, Size: fileSize}, fuse.OK
 		}
 	}
 	return nil, fuse.ENOENT
 }
 
 func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entries []fuse.DirEntry, st fuse.Status) {
+	// If the root directory is opened, list up index names as the directory entries.
 	if name == "" {
 		for _, indexName := range fs.indexNames {
 			entries = append(entries, fuse.DirEntry{Name: indexName, Mode: fuse.S_IFDIR})
 		}
 		return entries, fuse.OK
 	}
-	if name == "foo" || name == "bar" {
-		indexMappings := fs.mappings[name].(map[string]interface{})["mappings"].(map[string]interface{})
-		for docType := range indexMappings {
-			entries = append(entries, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
+
+	// If the index directory is opened, list up document types as the directory entries.
+	nameElems := strings.Split(name, "/")
+	if len(nameElems) == 1 {
+		mappingsByIndex, ok := fs.findMappingsByIndex(nameElems[0])
+		if ok {
+			for docType := range mappingsByIndex {
+				entries = append(entries, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
+			}
+			return entries, fuse.OK
 		}
-		return entries, fuse.OK
 	}
-	if name == "foo/test" {
-		for docID := range fs.documents["foo"]["test"] {
-			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
+
+	// If the document type directory is opened, list up documents as the file entries.
+	if len(nameElems) == 2 {
+		documents, ok := fs.findDocumentsByType(nameElems[0], nameElems[1])
+		if ok {
+			for docID := range documents {
+				entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
+			}
+			return entries, fuse.OK
 		}
-		return entries, fuse.OK
-	}
-	if name == "bar/test2" {
-		for docID := range fs.documents["bar"]["test2"] {
-			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
-		}
-		return entries, fuse.OK
 	}
 	return nil, fuse.ENOENT
 }
@@ -113,15 +139,9 @@ func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entries 
 func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, st fuse.Status) {
 	nameElems := strings.Split(name, "/")
 	if len(nameElems) == 3 {
-		docsByIndex := fs.documents[nameElems[0]]
-		if docsByIndex != nil {
-			docsByType := docsByIndex[nameElems[1]]
-			if docsByType != nil {
-				docSource := docsByType[nameElems[2]]
-				if docSource != nil {
-					return nodefs.NewDataFile(docSource), fuse.OK
-				}
-			}
+		docSource, ok := fs.findDocument(nameElems[0], nameElems[1], nameElems[2])
+		if ok {
+			return nodefs.NewDataFile(docSource), fuse.OK
 		}
 	}
 	return nil, fuse.ENOENT
@@ -154,7 +174,7 @@ func main() {
 		indexMappings := mappingsByIndex.(map[string]interface{})["mappings"].(map[string]interface{})
 		docsByIndex := make(map[string]map[string][]byte)
 		for docType := range indexMappings {
-			documentsByDocType := make(map[string][]byte)
+			docsByType := make(map[string][]byte)
 			result, err2 := dbClient.Search().Index(indexName).Type(docType).Do(context.Background())
 			if err2 != nil {
 				log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
@@ -164,9 +184,9 @@ func main() {
 				if err2 != nil {
 					log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
 				}
-				documentsByDocType[hit.Id] = docSource
+				docsByType[hit.Id] = docSource
 			}
-			docsByIndex[docType] = documentsByDocType
+			docsByIndex[docType] = docsByType
 		}
 		documents[indexName] = docsByIndex
 	}
