@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strings"
 
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -65,11 +66,18 @@ func (fs *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entries 
 }
 
 func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, st fuse.Status) {
-	if name == "foo/test/AVwqw4EZ5JQc-2pm7e5y" {
-		return nodefs.NewDataFile(fs.documents["foo"]["test"]["AVwqw4EZ5JQc-2pm7e5y"]), fuse.OK
-	}
-	if name == "bar/test2/AVwqxL895JQc-2pm7e5z" {
-		return nodefs.NewDataFile(fs.documents["bar"]["test2"]["AVwqxL895JQc-2pm7e5z"]), fuse.OK
+	splited := strings.Split(name, "/")
+	if len(splited) == 3 {
+		docsByIndex := fs.documents[splited[0]]
+		if docsByIndex != nil {
+			docsByType := docsByIndex[splited[1]]
+			if docsByType != nil {
+				docSource := docsByType[splited[2]]
+				if docSource != nil {
+					return nodefs.NewDataFile(docSource), fuse.OK
+				}
+			}
+		}
 	}
 	return nil, fuse.ENOENT
 }
