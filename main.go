@@ -166,15 +166,15 @@ func main() {
 	// Create the filesystem is specialized for Elasticsearch
 	dbClient, err := elastic.NewClient(elastic.SetURL(*dbURL))
 	if err != nil {
-		log.Fatalf("Failed to new client: error=%v¥n", err)
+		log.Fatalf("Failed to new client: error=%v\n", err)
 	}
 	indexNames, err := dbClient.IndexNames()
 	if err != nil {
-		log.Fatalf("Failed to fetch index names: error=%v¥n", err)
+		log.Fatalf("Failed to fetch index names: error=%v\n", err)
 	}
 	mappings, err := dbClient.GetMapping().Do(context.Background())
 	if err != nil {
-		log.Fatalf("Failed to fetch document types: error=%v¥n", err)
+		log.Fatalf("Failed to fetch document types: error=%v\n", err)
 	}
 	documents := make(map[string]map[string]map[string][]byte)
 	for indexName, mappingsByIndex := range mappings {
@@ -184,12 +184,12 @@ func main() {
 			docsByType := make(map[string][]byte)
 			result, err2 := dbClient.Search().Index(indexName).Type(docType).Size(-1).Do(context.Background())
 			if err2 != nil {
-				log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
+				log.Fatalf("Failed to fetch documents: error=%v\n", err2)
 			}
 			for _, hit := range result.Hits.Hits {
 				docSource, err2 := hit.Source.MarshalJSON()
 				if err2 != nil {
-					log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
+					log.Fatalf("Failed to fetch documents: error=%v\n", err2)
 				}
 				docsByType[hit.Id] = docSource
 			}
@@ -202,7 +202,7 @@ func main() {
 	// Start the FUSE server
 	fuseServer, _, err := nodefs.MountRoot(*mountPath, fs.Root(), nil)
 	if err != nil {
-		log.Fatalf("Failed to mount root: error=%v¥n", err)
+		log.Fatalf("Failed to mount root: error=%v\n", err)
 	}
 	fuseServer.Serve()
 }
