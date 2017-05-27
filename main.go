@@ -13,6 +13,9 @@ import (
 	elastic "gopkg.in/olivere/elastic.v5"
 )
 
+const appName = "Elasticsearch-FUSE"
+const appVersion = "0.1.0"
+
 type elasticSearchFs struct {
 	pathfs.FileSystem
 
@@ -151,7 +154,14 @@ func main() {
 	// Parse the command arguments
 	dbURL := flag.String("db", "http://localhost:9200", "Elasticsearch URL to connect")
 	mountPath := flag.String("mp", "./elasticsearch-fuse", "Directory path as mount point")
+	versionMode := flag.Bool("version", false, "Switch mode into version reporting")
 	flag.Parse()
+
+	// IF version arg is specified, report the app version and exit immediately.
+	if *versionMode {
+		log.Printf("%s %s\n", appName, appVersion)
+		return
+	}
 
 	// Create the filesystem is specialized for Elasticsearch
 	dbClient, err := elastic.NewClient(elastic.SetURL(*dbURL))
