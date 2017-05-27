@@ -149,15 +149,12 @@ func (fs *elasticSearchFs) Open(name string, flags uint32, context *fuse.Context
 
 func main() {
 	// Parse the command arguments
+	dbURL := flag.String("db", "http://localhost:9200", "Elasticsearch URL to connect")
+	mountPath := flag.String("mp", "./elasticsearch-fuse", "Directory path as mount point")
 	flag.Parse()
-	if len(flag.Args()) < 2 {
-		log.Fatal("Usage: elasticsearch-fuse ELASTICSEARCH_URL MOUNT_PATH")
-	}
-	dbURL := flag.Arg(0)
-	mountPath := flag.Arg(1)
 
 	// Create the filesystem is specialized for Elasticsearch
-	dbClient, err := elastic.NewClient(elastic.SetURL(dbURL))
+	dbClient, err := elastic.NewClient(elastic.SetURL(*dbURL))
 	if err != nil {
 		log.Fatalf("Failed to new client: error=%v¥n", err)
 	}
@@ -193,7 +190,7 @@ func main() {
 	fs := pathfs.NewPathNodeFs(&elasticSearchFs{pathfs.NewDefaultFileSystem(), indexNames, mappings, documents}, nil)
 
 	// Start the FUSE server
-	fuseServer, _, err := nodefs.MountRoot(mountPath, fs.Root(), nil)
+	fuseServer, _, err := nodefs.MountRoot(*mountPath, fs.Root(), nil)
 	if err != nil {
 		log.Fatalf("Failed to mount root: error=%v¥n", err)
 	}

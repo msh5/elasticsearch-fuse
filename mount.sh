@@ -2,4 +2,4 @@
 # only for development
 
 mkdir -p tmp
-go run main.go http://localhost:9200 tmp
+go run main.go -db http://localhost:9200 -mp tmp
