@@ -1,6 +1,7 @@
 # elasticsearch-fuse
 
 ![version](https://img.shields.io/badge/version-0.1.0-brightgreen.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/minagoro/elasticsearch-fuse)](https://goreportcard.com/report/github.com/minagoro/elasticsearch-fuse)
 
 ## Install
 
