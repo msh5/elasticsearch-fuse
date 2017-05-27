@@ -175,7 +175,7 @@ func main() {
 		docsByIndex := make(map[string]map[string][]byte)
 		for docType := range indexMappings {
 			docsByType := make(map[string][]byte)
-			result, err2 := dbClient.Search().Index(indexName).Type(docType).Do(context.Background())
+			result, err2 := dbClient.Search().Index(indexName).Type(docType).Size(-1).Do(context.Background())
 			if err2 != nil {
 				log.Fatalf("Failed to fetch documents: error=%v¥n", err2)
 			}
