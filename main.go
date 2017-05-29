@@ -21,27 +21,51 @@ type elasticSearchFs struct {
 
 	debugMode  bool
 	indexNames []string
-	mappings   map[string]interface{}
+	docTypes   map[string][]string
 	documents  map[string]map[string]map[string][]byte
 }
 
-func (self *elasticSearchFs) findMappingsByIndex(indexName string) (map[string]interface{}, bool) {
-	mappings, ok := self.mappings[indexName]
-	if ok {
-		return mappings.(map[string]interface{})["mappings"].(map[string]interface{}), true
+func fetchIndexNames(db *elastic.Client) []string {
+	indexNames, err := db.IndexNames()
+	if err != nil {
+		log.Fatalf("Failed to fetch index names: error=%v\n", err)
 	}
-	return nil, false
+	return indexNames
 }
 
-func (self *elasticSearchFs) findMapping(indexName string, docType string) (interface{}, bool) {
-	mappingsByIndex, ok := self.findMappingsByIndex(indexName)
-	if ok {
-		mapping, ok := mappingsByIndex[docType]
-		if ok {
-			return mapping, true
+func fetchDocumentTypes(db *elastic.Client, indexName string) []string {
+	mappings, err := db.GetMapping().Do(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to fetch document types: error=%v\n", err)
+	}
+	for curIndexName, curMappings := range mappings {
+		if curIndexName == indexName {
+			mappingsByIndex := curMappings.(map[string]interface{})["mappings"].(map[string]interface{})
+			docTypes := make([]string, 0)
+			for docType := range mappingsByIndex {
+				docTypes = append(docTypes, docType)
+			}
+			return docTypes
 		}
 	}
-	return nil, false
+	log.Fatalf("Not found: index=%v\n", indexName)
+	return nil
+}
+
+func fetchDocuments(db *elastic.Client, indexName string, docType string) map[string][]byte {
+	docs := make(map[string][]byte)
+	result, err := db.Search().Index(indexName).Type(docType).Size(-1).Do(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to fetch documents: error=%v\n", err)
+	}
+	for _, hit := range result.Hits.Hits {
+		docSource, err := hit.Source.MarshalJSON()
+		if err != nil {
+			log.Fatalf("Failed to fetch documents: error=%v\n", err)
+		}
+		docs[hit.Id] = docSource
+	}
+	return docs
 }
 
 func (self *elasticSearchFs) findDocumentsByType(indexName string, docType string) (map[string][]byte, bool) {
@@ -79,23 +103,22 @@ func (self *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.
 	// Return the attribute of the index directory
 	nameElems := strings.Split(name, "/")
 	if len(nameElems) == 1 {
-		exists := false
 		for _, indexName := range self.indexNames {
-			if indexName == nameElems[0] {
-				exists = true
-				break
+			if nameElems[0] == indexName {
+				return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 			}
-		}
-		if exists {
-			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 		}
 	}
 
 	// Return the attributes of the document type directory
 	if len(nameElems) == 2 {
-		_, ok := self.findMapping(nameElems[0], nameElems[1])
+		docTypesByIndex, ok := self.docTypes[nameElems[0]]
 		if ok {
-			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
+			for _, docType := range docTypesByIndex {
+				if nameElems[1] == docType {
+					return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
+				}
+			}
 		}
 	}
 
@@ -126,9 +149,9 @@ func (self *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entrie
 	// If the index directory is opened, list up document types as the directory entries.
 	nameElems := strings.Split(name, "/")
 	if len(nameElems) == 1 {
-		mappingsByIndex, ok := self.findMappingsByIndex(nameElems[0])
+		docTypesByIndex, ok := self.docTypes[nameElems[0]]
 		if ok {
-			for docType := range mappingsByIndex {
+			for _, docType := range docTypesByIndex {
 				entries = append(entries, fuse.DirEntry{Name: docType, Mode: fuse.S_IFDIR})
 			}
 			return entries, fuse.OK
@@ -184,36 +207,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to new client: error=%v\n", err)
 	}
-	indexNames, err := dbClient.IndexNames()
-	if err != nil {
-		log.Fatalf("Failed to fetch index names: error=%v\n", err)
-	}
-	mappings, err := dbClient.GetMapping().Do(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to fetch document types: error=%v\n", err)
-	}
+	indexNames := fetchIndexNames(dbClient)
+	docTypes := make(map[string][]string)
 	documents := make(map[string]map[string]map[string][]byte)
-	for indexName, mappingsByIndex := range mappings {
-		indexMappings := mappingsByIndex.(map[string]interface{})["mappings"].(map[string]interface{})
+	for _, indexName := range indexNames {
+		docTypesByIndex := fetchDocumentTypes(dbClient, indexName)
 		docsByIndex := make(map[string]map[string][]byte)
-		for docType := range indexMappings {
-			docsByType := make(map[string][]byte)
-			result, err2 := dbClient.Search().Index(indexName).Type(docType).Size(-1).Do(context.Background())
-			if err2 != nil {
-				log.Fatalf("Failed to fetch documents: error=%v\n", err2)
-			}
-			for _, hit := range result.Hits.Hits {
-				docSource, err2 := hit.Source.MarshalJSON()
-				if err2 != nil {
-					log.Fatalf("Failed to fetch documents: error=%v\n", err2)
-				}
-				docsByType[hit.Id] = docSource
-			}
+		for _, docType := range docTypesByIndex {
+			docsByType := fetchDocuments(dbClient, indexName, docType)
 			docsByIndex[docType] = docsByType
 		}
+		docTypes[indexName] = docTypesByIndex
 		documents[indexName] = docsByIndex
 	}
-	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, indexNames, mappings, documents}
+	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, indexNames, docTypes, documents}
 	pathNodefs := pathfs.NewPathNodeFs(&fs, nil)
 
 	// Start the FUSE server
