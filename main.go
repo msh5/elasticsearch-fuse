@@ -26,7 +26,7 @@ type elasticSearchFs struct {
 	indexNames     []string
 	documentTypes  map[string][]string
 	documentTotals map[string]map[string]int64
-	documents      map[string]map[string][]map[string][]byte
+	documents      map[string]map[string]map[int]map[string][]byte
 }
 
 func fetchIndexNames(db *elastic.Client) ([]string, error) {
@@ -93,6 +93,9 @@ func (self *elasticSearchFs) EnsureDocumentTypes(indexName string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
+	if self.documentTypes == nil {
+		self.documentTypes = make(map[string][]string)
+	}
 	self.documentTypes[indexName] = documentTypes
 	return documentTypes, nil
 }
@@ -102,6 +105,13 @@ func (self *elasticSearchFs) EnsureDocumentTotal(indexName string, docType strin
 	if err != nil {
 		return 0, err
 	}
+	if self.documentTotals == nil {
+		self.documentTotals = make(map[string]map[string]int64)
+	}
+	_, ok := self.documentTotals[indexName]
+	if !ok {
+		self.documentTotals[indexName] = make(map[string]int64)
+	}
 	self.documentTotals[indexName][docType] = total
 	return total, nil
 }
@@ -110,6 +120,17 @@ func (self *elasticSearchFs) EnsureDocuments(indexName string, docType string, p
 	documents, err := fetchDocuments(self.db, indexName, docType, self.pageSize*page, self.pageSize)
 	if err != nil {
 		return nil, err
+	}
+	if self.documents == nil {
+		self.documents = make(map[string]map[string]map[int]map[string][]byte)
+	}
+	_, ok := self.documents[indexName]
+	if !ok {
+		self.documents[indexName] = make(map[string]map[int]map[string][]byte)
+	}
+	_, ok = self.documents[indexName][docType]
+	if !ok {
+		self.documents[indexName][docType] = make(map[int]map[string][]byte)
 	}
 	self.documents[indexName][docType][page] = documents
 	return documents, nil
@@ -178,9 +199,10 @@ func (self *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.
 		if err != nil {
 			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, err=%v\n", nameElems[0], nameElems[1], err)
 		}
-		_, ok := documents[nameElems[3]]
+		docSource, ok := documents[nameElems[3]]
+		fileSize := uint64(len(docSource))
 		if ok {
-			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
+			return &fuse.Attr{Mode: fuse.S_IFREG | 0444, Size: fileSize}, fuse.OK
 		}
 	}
 	return nil, fuse.ENOENT
@@ -289,7 +311,11 @@ func main() {
 	// Create the filesystem is specialized for Elasticsearch
 	dbURLsAsArray := strings.Split(*dbURLs, ",")
 	db, err := elastic.NewClient(elastic.SetURL(dbURLsAsArray...))
-	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, *pageSize, db, nil, nil, nil, nil}
+	if err != nil {
+		log.Fatalf("Failed to new client: error=%v\n", err)
+	}
+	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, *pageSize, db,
+		nil, nil, nil, nil}
 	pathNodefs := pathfs.NewPathNodeFs(&fs, nil)
 
 	// Start the FUSE server
@@ -297,5 +323,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to mount root: error=%v\n", err)
 	}
+	log.Println("Mounted")
 	fuseServer.Serve()
 }
