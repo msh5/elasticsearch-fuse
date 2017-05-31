@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/hanwen/go-fuse/fuse"
@@ -19,11 +20,13 @@ const appVersion = "0.1.0"
 type elasticSearchFs struct {
 	pathfs.FileSystem
 
-	debugMode     bool
-	db            *elastic.Client
-	indexNames    []string
-	documentTypes map[string][]string
-	documents     map[string]map[string]map[string][]byte
+	debugMode      bool
+	pageSize       int
+	db             *elastic.Client
+	indexNames     []string
+	documentTypes  map[string][]string
+	documentTotals map[string]map[string]int64
+	documents      map[string]map[string][]map[string][]byte
 }
 
 func fetchIndexNames(db *elastic.Client) ([]string, error) {
@@ -52,9 +55,17 @@ func fetchDocumentTypes(db *elastic.Client, indexName string) ([]string, error) 
 	return docTypes, nil
 }
 
-func fetchDocuments(db *elastic.Client, indexName string, docType string) (map[string][]byte, error) {
+func countDocuments(db *elastic.Client, indexName string, docType string) (int64, error) {
+	result, err := db.Search().Index(indexName).Type(docType).Size(0).Do(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	return result.Hits.TotalHits, nil
+}
+
+func fetchDocuments(db *elastic.Client, indexName string, docType string, from int, size int) (map[string][]byte, error) {
 	docs := make(map[string][]byte)
-	result, err := db.Search().Index(indexName).Type(docType).Size(-1).Do(context.Background())
+	result, err := db.Search().Index(indexName).Type(docType).From(from).Size(size).Do(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -86,12 +97,21 @@ func (self *elasticSearchFs) EnsureDocumentTypes(indexName string) ([]string, er
 	return documentTypes, nil
 }
 
-func (self *elasticSearchFs) EnsureDocuments(indexName string, docType string) (map[string][]byte, error) {
-	documents, err := fetchDocuments(self.db, indexName, docType)
+func (self *elasticSearchFs) EnsureDocumentTotal(indexName string, docType string) (int64, error) {
+	total, err := countDocuments(self.db, indexName, docType)
+	if err != nil {
+		return 0, err
+	}
+	self.documentTotals[indexName][docType] = total
+	return total, nil
+}
+
+func (self *elasticSearchFs) EnsureDocuments(indexName string, docType string, page int) (map[string][]byte, error) {
+	documents, err := fetchDocuments(self.db, indexName, docType, self.pageSize*page, self.pageSize)
 	if err != nil {
 		return nil, err
 	}
-	self.documents[indexName][docType] = documents
+	self.documents[indexName][docType][page] = documents
 	return documents, nil
 }
 
@@ -132,13 +152,33 @@ func (self *elasticSearchFs) GetAttr(name string, context *fuse.Context) (*fuse.
 		}
 	}
 
-	// Return the attributes of the document file
+	// Return the attributes of the paging directory
 	if len(nameElems) == 3 {
-		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1])
+		total, err := self.EnsureDocumentTotal(nameElems[0], nameElems[1])
 		if err != nil {
 			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, err=%v\n", nameElems[0], nameElems[1], err)
 		}
-		_, ok := documents[nameElems[2]]
+		page, err := strconv.Atoi(nameElems[2])
+		if err != nil {
+			log.Fatalf("Failed to parse the paging directory name as integer: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], nameElems[2], err)
+		}
+		from := int64(self.pageSize * page)
+		if from < total {
+			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
+		}
+	}
+
+	// Return the attributes of the document file
+	if len(nameElems) == 4 {
+		page, err := strconv.ParseInt(nameElems[2], 10, 0)
+		if err != nil {
+			log.Fatalf("Failed to parse the paging directory name as integer: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], nameElems[2], err)
+		}
+		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1], int(page))
+		if err != nil {
+			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, err=%v\n", nameElems[0], nameElems[1], err)
+		}
+		_, ok := documents[nameElems[3]]
 		if ok {
 			return &fuse.Attr{Mode: fuse.S_IFDIR | 0555}, fuse.OK
 		}
@@ -178,15 +218,32 @@ func (self *elasticSearchFs) OpenDir(name string, context *fuse.Context) (entrie
 
 	// If the document type directory is opened, list up documents as the file entries.
 	if len(nameElems) == 2 {
-		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1])
+		total, err := self.EnsureDocumentTotal(nameElems[0], nameElems[1])
 		if err != nil {
 			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, err=%v\n", nameElems[0], nameElems[1], err)
+		}
+		for i := 0; int64(i*self.pageSize) < total; i++ {
+			entries = append(entries, fuse.DirEntry{Name: strconv.Itoa(i), Mode: fuse.S_IFREG})
+		}
+		return entries, fuse.OK
+	}
+
+	// If the document type directory is opened, list up documents as the file entries.
+	if len(nameElems) == 3 {
+		page, err := strconv.Atoi(nameElems[2])
+		if err != nil {
+			log.Fatalf("Failed to parse the paging directory name as integer: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], nameElems[2], err)
+		}
+		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1], int(page))
+		if err != nil {
+			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], nameElems[2], err)
 		}
 		for docID := range documents {
 			entries = append(entries, fuse.DirEntry{Name: docID, Mode: fuse.S_IFREG})
 		}
 		return entries, fuse.OK
 	}
+
 	return nil, fuse.ENOENT
 }
 
@@ -196,12 +253,16 @@ func (self *elasticSearchFs) Open(name string, flags uint32, context *fuse.Conte
 	}
 
 	nameElems := strings.Split(name, "/")
-	if len(nameElems) == 3 {
-		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1])
+	if len(nameElems) == 4 {
+		page, err := strconv.Atoi(nameElems[2])
 		if err != nil {
-			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, err=%v\n", nameElems[0], nameElems[1], err)
+			log.Fatalf("Failed to parse the paging directory name as integer: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], nameElems[2], err)
 		}
-		docSource, ok := documents[nameElems[2]]
+		documents, err := self.EnsureDocuments(nameElems[0], nameElems[1], page)
+		if err != nil {
+			log.Fatalf("Failed to ensure the documents: index=%v, doctype=%v, page=%v, err=%v\n", nameElems[0], nameElems[1], page, err)
+		}
+		docSource, ok := documents[nameElems[3]]
 		if ok {
 			return nodefs.NewDataFile(docSource), fuse.OK
 		}
@@ -211,9 +272,9 @@ func (self *elasticSearchFs) Open(name string, flags uint32, context *fuse.Conte
 
 func main() {
 	// Parse the command arguments
-	dbURLs := flag.String("servers", "http://localhost:9200", "Elasticsearch URLs to connect")
+	dbURLs := flag.String("db-urls", "http://localhost:9200", "Elasticsearch URLs to connect")
 	mountPath := flag.String("mount-path", "./elasticsearch-fuse", "Directory path as mount point")
-	// TODO: pageSize := flag.Int("page", 10, "The number of documents to list in one directory")
+	pageSize := flag.Int("page", 10, "The number of documents to list in one directory")
 	// TODO: updateInterval := flag.Int("update-interval", 10, "Interval seconds of same queries to Elasticsearch")
 	versionMode := flag.Bool("version", false, "Switch mode into version reporting")
 	debugMode := flag.Bool("debug", false, "Emit debug logs")
@@ -228,7 +289,7 @@ func main() {
 	// Create the filesystem is specialized for Elasticsearch
 	dbURLsAsArray := strings.Split(*dbURLs, ",")
 	db, err := elastic.NewClient(elastic.SetURL(dbURLsAsArray...))
-	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, db, nil, nil, nil}
+	fs := elasticSearchFs{pathfs.NewDefaultFileSystem(), *debugMode, *pageSize, db, nil, nil, nil, nil}
 	pathNodefs := pathfs.NewPathNodeFs(&fs, nil)
 
 	// Start the FUSE server
