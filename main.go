@@ -14,8 +14,8 @@ import (
 	elastic "gopkg.in/olivere/elastic.v5"
 )
 
-const appName = "Elasticsearch-FUSE"
-const appVersion = "0.1.0"
+const appName = "elasticsearch-fuse"
+const appVersion = "0.2.0"
 
 type elasticSearchFs struct {
 	pathfs.FileSystem
