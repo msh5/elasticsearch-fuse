@@ -12,9 +12,9 @@ $ go get github.com/minagoro/elasticsearch-fuse
 ## Features
 
 - Mount documents in one Elasticsearch cluster
+- List documents with paging
 - [PLANNED] Mount documents by index
 - [PLANNED] Mount documents by document type
-- [PLANNED] List documents with paging
 - [PLANNED] Use Elasticsearch cluster name as default mount-point directory name
 
 ## License
