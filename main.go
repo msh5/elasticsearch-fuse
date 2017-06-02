@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -295,7 +296,7 @@ func (self *elasticSearchFs) Open(name string, flags uint32, context *fuse.Conte
 func main() {
 	// Parse the command arguments
 	dbURLs := flag.String("db-urls", "http://localhost:9200", "Elasticsearch URLs to connect")
-	mountPath := flag.String("mount-path", "./elasticsearch-fuse", "Directory path as mount point")
+	mountPathPtr := flag.String("mount-path", "./{cluster_name}", "Directory path as mount point")
 	pageSize := flag.Int("page", 10, "The number of documents to list in one directory")
 	// TODO: updateInterval := flag.Int("update-interval", 10, "Interval seconds of same queries to Elasticsearch")
 	versionMode := flag.Bool("version", false, "Switch mode into version reporting")
@@ -308,9 +309,23 @@ func main() {
 		return
 	}
 
-	// Create the filesystem is specialized for Elasticsearch
+	// Fetch cluster name to decide the default mount path
 	dbURLsAsArray := strings.Split(*dbURLs, ",")
 	db, err := elastic.NewClient(elastic.SetURL(dbURLsAsArray...))
+	mountPath := *mountPathPtr
+	if mountPath == "./{cluster_name}" {
+		resp, err := db.ClusterHealth().Do(context.Background())
+		if err != nil {
+			log.Fatalf("Failed to fetch cluster health: error=%v\n", err)
+		}
+		mountPath = resp.ClusterName
+	}
+	err = os.MkdirAll(mountPath, 0)
+	if err != nil {
+		log.Fatalf("Fatal to make all directories: erro=%v\n", err)
+	}
+
+	// Create the filesystem is specialized for Elasticsearch
 	if err != nil {
 		log.Fatalf("Failed to new client: error=%v\n", err)
 	}
@@ -319,7 +334,7 @@ func main() {
 	pathNodefs := pathfs.NewPathNodeFs(&fs, nil)
 
 	// Start the FUSE server
-	fuseServer, _, err := nodefs.MountRoot(*mountPath, pathNodefs.Root(), nil)
+	fuseServer, _, err := nodefs.MountRoot(mountPath, pathNodefs.Root(), nil)
 	if err != nil {
 		log.Fatalf("Failed to mount root: error=%v\n", err)
 	}
