@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -296,11 +297,13 @@ func (self *elasticSearchFs) Open(name string, flags uint32, context *fuse.Conte
 func main() {
 	// Parse the command arguments
 	dbURLs := flag.String("db-urls", "http://localhost:9200", "Elasticsearch URLs to connect")
-	mountPathPtr := flag.String("mount-path", "./{cluster_name}", "Directory path as mount point")
+	mountPathPtr := flag.String("mount-path", "{mount-path-dir}/{mount-path-base}", "Directory path as mount point")
+	mountPathDir := flag.String("mount-path-dir", ".", "Directory path as mount point")
+	mountPathBase := flag.String("mount-path-base", "{cluster_name}", "Directory path as mount point")
 	pageSize := flag.Int("page", 10, "The number of documents to list in one directory")
 	// TODO: updateInterval := flag.Int("update-interval", 10, "Interval seconds of same queries to Elasticsearch")
-	versionMode := flag.Bool("version", false, "Switch mode into version reporting")
 	debugMode := flag.Bool("debug", false, "Emit debug logs")
+	versionMode := flag.Bool("version", false, "Switch mode into version reporting")
 	flag.Parse()
 
 	// IF version arg is specified, report the app version and exit immediately.
@@ -309,20 +312,47 @@ func main() {
 		return
 	}
 
-	// Fetch cluster name to decide the default mount path
+	// Connect to Elasticsearch cluster and initialize the client
 	dbURLsAsArray := strings.Split(*dbURLs, ",")
 	db, err := elastic.NewClient(elastic.SetURL(dbURLsAsArray...))
-	mountPath := *mountPathPtr
-	if mountPath == "./{cluster_name}" {
+	if err != nil {
+		log.Fatalf("Failed to connect with db: url=%v\n", *dbURLs)
+	}
+	log.Println("Connected with db")
+
+	// Fetch cluster name to decide the default mount path
+	mountPath := strings.Replace(*mountPathPtr, "{mount-path-dir}", *mountPathDir, 1)
+	mountPath = strings.Replace(mountPath, "{mount-path-base}", *mountPathBase, 1)
+	if strings.Index(mountPath, "{cluster_name}") != -1 {
 		resp, err := db.ClusterHealth().Do(context.Background())
 		if err != nil {
 			log.Fatalf("Failed to fetch cluster health: error=%v\n", err)
 		}
-		mountPath = resp.ClusterName
+		mountPath = strings.Replace(mountPath, "{cluster_name}", resp.ClusterName, -1)
 	}
-	err = os.MkdirAll(mountPath, 0)
+
+	// Ensure that mount path exists
+	_, err = os.Stat(mountPath)
+	madeMountPathBase := false
 	if err != nil {
-		log.Fatalf("Fatal to make all directories: erro=%v\n", err)
+		if os.IsNotExist(err) {
+			_, err = os.Stat(path.Dir(mountPath))
+			if err != nil {
+				if os.IsNotExist(err) {
+					log.Fatalf("Need to make <mount-path-dir> directory by yourself")
+				} else {
+					log.Fatalf("Fatal to make directory for mount: error=%v\n", err)
+				}
+			}
+			log.Println("Make the directory as mount path: %v\n", mountPath)
+			madeMountPathBase = true
+			err = os.Mkdir(mountPath, 0)
+			if err != nil {
+				log.Fatalf("Fatal to make directory for mount: error=%v\n", err)
+			}
+		} else {
+			log.Fatalf("Fatal to stat mount directory: error=%v\n", err)
+		}
 	}
 
 	// Create the filesystem is specialized for Elasticsearch
@@ -340,4 +370,11 @@ func main() {
 	}
 	log.Println("Mounted")
 	fuseServer.Serve()
+
+	// Finish the application
+	log.Println("Finished")
+	if madeMountPathBase {
+		log.Println("Remove the directory as mount path")
+		os.Remove(mountPath)
+	}
 }
