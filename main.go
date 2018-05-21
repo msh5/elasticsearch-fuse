@@ -1,38 +1,60 @@
 package main
 
 import (
-	"flag"
 	"log"
+	"os"
+
+	"github.com/urfave/cli"
 )
 
-const appName = "elasticsearch-fuse"
-const appVersion = "0.2.0"
-
 func main() {
-	// Parse the command arguments
-	urls := flag.String("db-urls", "http://localhost:9200", "Elasticsearch URLs to connect")
-	mountPath := flag.String("mount-path", "./elasticsearch-fuse", "Directory path as mount point")
-	pageSize := flag.Int("page", 10, "The number of documents to list in one directory")
-	// TODO: updateInterval := flag.Int("update-interval", 10, "Interval seconds of same queries to Elasticsearch")
-	debug := flag.Bool("debug", false, "Emit debug logs")
-	version := flag.Bool("version", false, "Switch mode into version reporting")
-	flag.Parse()
-
-	// IF version arg is specified, report the app version and exit immediately.
-	if *version {
-		log.Printf("%s %s\n", appName, appVersion)
-		return
+	app := cli.NewApp()
+	app.Name = "elasticsearch-fuse"
+	app.Version = "0.2.0"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  "urls",
+			Value: "http://localhost:9200",
+			Usage: "Elasticsearch server URLs",
+		},
+		cli.StringFlag{
+			Name:  "mount-path",
+			Value: "./elasticsearch-fuse",
+			Usage: "Directory path as mount point",
+		},
+		cli.IntFlag{
+			Name:  "page",
+			Value: 10,
+			Usage: "The number of documents to list in one directory",
+		},
+		// TODO: updateInterval := flag.Int("update-interval", 10, "Interval seconds of same queries to Elasticsearch")
+		cli.BoolFlag{
+			Name:  "debug",
+			Usage: "Emit debug logs",
+		},
 	}
+	app.Action = func(c *cli.Context) error {
+		// Get command options
+		urls := c.String("urls")
+		mountPath := c.String("mount")
+		pageSize := c.Int("page")
+		debug := c.Bool("debug")
 
-	// Create the filesystem is specialized for Elasticsearch
-	fs, err := NewElasticsearchFS(*urls, *pageSize, *debug)
-	if err != nil {
-		log.Fatalf("Failed to new filesystem: error=%v\n", err)
+		// Create the filesystem is specialized for Elasticsearch
+		fs, err := NewElasticsearchFS(urls, pageSize, debug)
+		if err != nil {
+			return err
+		}
+
+		// Start the FUSE server
+		err = MountFilesystem(fs, mountPath)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
-
-	// Start the FUSE server
-	err = MountFilesystem(fs, *mountPath)
+	err := app.Run(os.Args)
 	if err != nil {
-		log.Fatalf("Failed to mount filesystem: error=%v\n", err)
+		log.Fatal(err)
 	}
 }

@@ -30,6 +30,12 @@
   version = "v0.8.0"
 
 [[projects]]
+  name = "github.com/urfave/cli"
+  packages = ["."]
+  revision = "cfb38830724cc34fedffe9a2a29fb54fa9169cd1"
+  version = "v1.20.0"
+
+[[projects]]
   name = "gopkg.in/olivere/elastic.v5"
   packages = [
     ".",
@@ -42,6 +48,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a4bb5dc5fe0f3ab8a4cf189f9f4d8abce9757659e6f59a4a075576a1f1cf187d"
+  inputs-digest = "a6edc5df637cfe1900f6864ba26b782fed453cba5942591ce4b11f04a9eebeb4"
   solver-name = "gps-cdcl"
   solver-version = 1
