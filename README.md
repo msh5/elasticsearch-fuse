@@ -1,21 +1,20 @@
-# elasticsearch-fuse
+# esfuse
 
-![version](https://img.shields.io/badge/version-0.1.0-brightgreen.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/minagoro/elasticsearch-fuse)](https://goreportcard.com/report/github.com/minagoro/elasticsearch-fuse)
+![version](https://img.shields.io/badge/version-0.2.0-brightgreen.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/msh5/esfuse)](https://goreportcard.com/report/github.com/msh5/esfuse)
 
 ## Install
 
 ```
-$ go get github.com/minagoro/elasticsearch-fuse
+$ go get github.com/msh5/esfuse
 ```
 
 ## Features
 
 - Mount documents in one Elasticsearch cluster
 - List documents with paging
-- [PLANNED] Mount documents by index
-- [PLANNED] Mount documents by document type
-- [PLANNED] Use Elasticsearch cluster name as default mount-point directory name
+- Mount documents by index
+- Mount documents by document type
 
 ## License
 
