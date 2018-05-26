@@ -1,12 +1,12 @@
-# esfuse
+# elasticsearch-fuse
 
 ![version](https://img.shields.io/badge/version-0.2.0-brightgreen.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/msh5/esfuse)](https://goreportcard.com/report/github.com/msh5/esfuse)
+[![Go Report Card](https://goreportcard.com/badge/github.com/msh5/elasticsearch-fuse)](https://goreportcard.com/report/github.com/msh5/elasticsearch-fuse)
 
 ## Install
 
 ```
-$ go get github.com/msh5/esfuse
+$ go get github.com/msh5/elasticsearch-fuse
 ```
 
 ## Features
