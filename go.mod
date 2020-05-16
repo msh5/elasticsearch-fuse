@@ -1,6 +1,6 @@
-module github.com/ShintaNakama/elasticsearch-fuse
+module github.com/ms5/elasticsearch-fuse
 
-go 1.13
+go 1.14
 
 require (
 	github.com/hanwen/go-fuse v0.0.0-20170609101909-5690be47d614
